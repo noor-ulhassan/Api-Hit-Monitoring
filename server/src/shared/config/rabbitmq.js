@@ -31,13 +31,65 @@ class RabbitMqConnection {
       logger.info("Connecting to RabbitMQ", config.rabbitmq.url);
       this.connection = await amqp.connect(config.rabbitmq.url);
       this.channel = await this.connection.createChannel();
-      await this.channel.assertQueue("HEALTH_CHECK", { durable: true });
+      // creating key
+      const dlqName = `${config.rabbitmq.queue}.dlq`;
+      // Dead Letter Queue
+      await this.channel.assertQueue(dlqName, { durable: true });
+
+      // Normal Queue
+      await this.channel.assertQueue(config.rabbitmq.queue, {
+        durable: true,
+        arguments: {
+          "x-dead-letter-exchange": "",
+          "x-dead-letter-routing-key": dlqName,
+        },
+      });
+      logger.info("RabbitMQ connected", config.rabbitmq.queue);
+      this.connection.on("close", () => {
+        logger.warn("Rabbit MQ Connection closed");
+        this.connection = null;
+        this.channel = null;
+      });
+      this.connection.on("error", (err) => {
+        logger.error("Rabbit MQ Connection error ", err);
+        this.connection = null;
+        this.channel = null;
+      });
+
       this.isConnecting = false;
-      logger.info("RabbitMQ connected");
+      return this.channel;
     } catch (error) {
       logger.error("Error in RabbitMQ connection: ", error);
       this.isConnecting = false;
       throw error;
+    }
+  }
+
+  getChannel() {
+    return this.channel;
+  }
+
+  getStatus() {
+    if (!this.connect || !this.channel) {
+      return "DISCONNECTED";
+    }
+    if (this.connect.closing) return "closing";
+    return "CONNECTED";
+  }
+
+  async close() {
+    try {
+      if (this.channel) {
+        await this.channel.close();
+        this.channel = null;
+      }
+      if (this.connection) {
+        await this.connection.close();
+        this.connection = null;
+      }
+      logger.info("RabbitMQ connection closed");
+    } catch (error) {
+      logger.error("Error in closing RabbitMQ connection:", error);
     }
   }
 }
