@@ -34,6 +34,9 @@ the full mental model back.
 | File | Phase | Status |
 |------|-------|--------|
 | `01-foundations-infrastructure-and-config.md` | Project concept, architecture, local infrastructure (Docker Compose), configuration layer, structured logging, database and message-queue connection modules | Complete up to commit `1d2f210` |
+| `02-data-models-and-security-utils.md` | The data layer: four Mongoose schemas (`User`, `Client`, `ApiKey`, `ApiHits`) and the standalone password-policy class; hashing lifecycle, index strategy, TTL expiry, the abandoned PostgreSQL plan | Complete up to commit `96ab4e2` |
+| `03-response-envelope-and-error-handling.md` | The HTTP contract: `AppError` (status code + operational-vs-bug flag on the thrown error) and `ResponseFormatter` (one JSON envelope for success / error / validation / paginated replies), both built before the first route | Complete up to commit `1b49f97` |
+| `04-server-bootstrap-and-analytics-rollup.md` | `server.js` rewritten from stub to real bootstrap (middleware stack, `/` + `/health`, connect-before-listen, graceful shutdown, process safety nets); the Express error middleware; and `endpoint_metrics`, the PostgreSQL pre-aggregation rollup table | Working tree on top of `1cb8f56`; not yet committed |
 
 ## Conventions used across logs
 
