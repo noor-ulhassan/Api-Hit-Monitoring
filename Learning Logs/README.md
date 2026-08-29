@@ -34,6 +34,7 @@ the full mental model back.
 | File | Phase | Status |
 |------|-------|--------|
 | `01-foundations-infrastructure-and-config.md` | Project concept, architecture, local infrastructure (Docker Compose), configuration layer, structured logging, database and message-queue connection modules | Complete up to commit `1d2f210` |
+| `02-data-models-and-security-utils.md` | The data layer: four Mongoose schemas (`User`, `Client`, `ApiKey`, `ApiHits`) and the standalone password-policy class; hashing lifecycle, index strategy, TTL expiry, the abandoned PostgreSQL plan | Complete up to commit `96ab4e2` |
 
 ## Conventions used across logs
 
