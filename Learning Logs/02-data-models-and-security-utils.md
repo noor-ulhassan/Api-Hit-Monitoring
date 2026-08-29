@@ -188,7 +188,21 @@ values yet (Issue 8).
 
 ## 4. Walkthrough - `SecurityUtil.js`
 
-A class with no instances: one static config object and one static method.
+Each walkthrough below runs the same pass: **what we did**, **what it does**,
+**why it is built that way**. Bugs are detailed in section 11.
+
+**What we did.** Added `src/shared/utils/SecurityUtil.js`: one class,
+`SecurityUtils`, with no instances - a static config object
+(`PASSWORD_REQUIREMENTS`) and one static method (`validatePassword`).
+
+**What it does.** `SecurityUtils.validatePassword("hunter2")` returns
+`{ success: false, errors: [ "Password must be at least 8 chars long!", ... ] }`
+- a boolean plus every rule the password broke. The `User` model calls it from
+its password validator, and the registration route will call it directly so it
+can reject a weak password with specific reasons *before* a `User` is
+constructed.
+
+**Why it is built this way.**
 
 `PASSWORD_REQUIREMENTS` is read from `process.env` **at module load time**
 (`PASSWORD_MIN_LENGTH`, `PASSWORD_REQUIRE_UPPERCASE`, and three siblings), each
@@ -225,9 +239,18 @@ drifting apart.
 
 ## 5. Walkthrough - `User.js`
 
-Dashboard account for a human. Fields: `username`, `email`, `password`, `role`,
-`clientId`, `isActive`, and a `permissions` sub-document of four booleans.
-`timestamps: true`, `collection: "users"`.
+**What we did.** Filled the empty `User.js` with a Mongoose schema and model for
+a dashboard account. Fields: `username`, `email`, `password`, `role`, `clientId`,
+`isActive`, and a `permissions` sub-document of four booleans. Plus a
+`pre('save')` hook and two secondary indexes. `timestamps: true`,
+`collection: "users"`.
+
+**What it does.** On `new User({...}).save()`, Mongoose validates every field
+(character-set on `username`, format on `email`, the `SecurityUtils` policy on
+`password`), then the `pre('save')` hook bcrypt-hashes the password before the
+document is written. Querying returns the account including the password hash
+(there is no `select: false` yet - Issue 4). It is not imported anywhere yet, so
+none of this has run.
 
 **Why each decision:**
 
@@ -269,9 +292,17 @@ Missing: `select: false` on `password`, a `toJSON` transform to strip it, and a
 
 ## 6. Walkthrough - `Client.js`
 
-The tenant record. Fields: `name`, `slug`, `email`, `description`, `website`,
-`createdBy`, `isActive`, and a `settings` sub-document. `timestamps: true`,
-`collection: "clients"`.
+**What we did.** Filled `Client.js` with a Mongoose schema and model for a
+tenant - one organisation using the monitoring service. Fields: `name`, `slug`,
+`email`, `description`, `website`, `createdBy`, `isActive`, and a `settings`
+sub-document (`dataRetentionDays`, `alertsEnabled`, `timezone`). One index on
+`isActive`. `timestamps: true`, `collection: "clients"`.
+
+**What it does.** It is the row everything else points at: `User.clientId`,
+`ApiKey.clientId`, and `ApiHit.clientId` are all references to a `Client._id`.
+`settings` is where per-tenant behaviour (retention window, alerting, report
+timezone) will be read from. On `save()` it enforces the `slug` format and the
+required `createdBy`. Not wired up yet.
 
 **Why each decision:**
 
@@ -297,8 +328,21 @@ The tenant record. Fields: `name`, `slug`, `email`, `description`, `website`,
 
 ## 7. Walkthrough - `ApiKey.js`
 
-The credential a client backend presents on the ingest path. The largest schema
-in this phase. `timestamps: true`, `collection: "api_keys"`.
+**What we did.** Filled `ApiKey.js` with the largest schema in this phase - the
+credential a client's backend presents on every ingest call. Field groups:
+identity (`keyId`, `keyValue`), ownership (`clientId`, `createdBy`), labels
+(`name`, `description`), `environment`, a `permissions` block, a `security` block
+(IP / origin allow-lists, rotation tracking), `expiresAt`, and a `metadata`
+block. Four compound indexes plus an `isExpired()` instance method.
+`timestamps: true`, `collection: "api_keys"`.
+
+**What it does.** It is the lookup target on the ingest hot path: a request
+arrives with a key, the server finds the `ApiKey` by `keyValue`, checks
+`isActive`, `permissions.canIngest`, the IP / origin allow-lists, and `expiresAt`
+before accepting the hit. The `{ expiresAt: 1 }` TTL index also makes Mongo
+delete the key document itself once it expires (Issue 9). As written the model
+cannot actually be saved - `keyId` and `keyValue` are `required` but nothing
+generates them (Issue 8).
 
 **Field groups and why they exist:**
 
@@ -344,14 +388,20 @@ mostly useful in the seconds-to-minutes window before the background sweep runs.
 
 ## 8. Walkthrough - `ApiHits.js`
 
-One document per tracked call. The append-only stream from the Phase 01
-architecture diagram. `timestamps: true`, `collection: "api_hits"` - the same
-name as the RabbitMQ queue, by intent.
+**What we did.** Filled `ApiHits.js` with a flat Mongoose schema for a single
+tracked API call - the append-only stream from the Phase 01 architecture
+diagram. Fields: `eventId` (unique public ID), `timestamp` (the caller's event
+time, separate from the auto `createdAt` insert time), `serviceName`, `endpoint`,
+`method` (enum of the seven HTTP verbs), `statusCode`, `latencyMs`, `clientId`,
+`apiKeyId`, `ip`, `userAgent`. Four compound indexes, one of them a 30-day TTL.
+`timestamps: true`, `collection: "api_hits"` - the same name as the RabbitMQ
+queue, by intent.
 
-**Fields:** `eventId` (unique public ID), `timestamp` (the caller's event time,
-required and separate from the auto `createdAt` which is insert time),
-`serviceName`, `endpoint`, `method` (enum of the seven HTTP verbs), `statusCode`,
-`latencyMs`, `clientId`, `apiKeyId`, `ip`, `userAgent`.
+**What it does.** This is the model the consumer will insert into once per
+message it pulls off `api_hits`. Nothing references it, but no nested objects and
+minimal validation mean an insert is as cheap as possible. The TTL index makes
+Mongo drop each document 30 days after its `timestamp`, so the raw collection
+stays bounded while the (not-yet-built) aggregates keep the long-term record.
 
 **Why it looks the way it does:**
 

@@ -137,42 +137,86 @@ it should - don't make N clients redo it.
 
 ## 4. Walkthrough
 
+Each file gets the same pass: **what we did**, **what it does**, **why it is
+built that way**. Bugs are named here and detailed in section 5.
+
 ### 4a. `AppError.js`
 
-Eleven lines. `class AppError extends Error`, constructor
-`(message, statusCode = 500, errors = null)`:
+**What we did.** Added an eleven-line file: one class, `AppError`, that extends
+the built-in `Error`. Its constructor is
+`(message, statusCode = 500, errors = null)` and it sets four properties on the
+new object.
 
-- `super(message)` (`:3`) - hands the message to `Error` so `err.message` and
-  normal error behaviour work.
-- `this.statusCode` (`:4`) - set by the thrower:
-  `new AppError("Not found", 404)`, `new AppError("Conflict", 409)`.
-- `this.errors` (`:5`) - optional structured detail, e.g. an array of
-  `{ field, message }` for a rejected form.
-- `this.isOperational = true` (`:6`) - always true, because *being an `AppError`
-  is the definition of operational* (see 3b). You never construct a
-  non-operational one on purpose; that is just a plain `Error`.
-- `Error.captureStackTrace(this, this.constructor)` (`:7`) - clean stack
+**What it does.** When code somewhere does `throw new AppError("Not found",
+404)`, the thrown object is a normal `Error` (it has `.message` and `.stack`)
+*plus* three extra fields the rest of the app can read: `.statusCode` (the HTTP
+code this error should produce), `.errors` (optional structured detail), and
+`.isOperational` (always `true`). The central error middleware - built in Phase
+04 - reads those fields to decide what status and body to send. Nothing throws an
+`AppError` yet; this is the type the error path will be built around.
+
+**Why it is built this way.**
+
+- **`super(message)`** - hands the text to `Error` so `err.message`, `throw`
+  semantics, and stack capture all still work normally.
+- **`statusCode`, default 500** - the thrower states intent
+  (`new AppError("Conflict", 409)`); if it is forgotten, 500 is the safe
+  assumption (see 3c). A plain `throw new Error("...")` carries none of this, so
+  the handler would have to string-match the message - brittle.
+- **`errors`, default `null`** - a slot for a list of field problems
+  (`[{ field, message }]`) when one line of message is not enough, e.g. a
+  rejected form.
+- **`isOperational = true`, hard-coded** - being an `AppError` *is* the
+  definition of "an error I threw on purpose" (see 3b). You never construct a
+  non-operational one; that is just a bare `Error`. A raw `TypeError` reaching
+  the handler therefore has no `isOperational`, which is exactly how the handler
+  tells a deliberate error from a bug.
+- **`Error.captureStackTrace(this, this.constructor)`** - a V8 feature that
+  builds `.stack` while omitting the frames inside this constructor, so the trace
+  starts at the `new AppError(...)` call site instead of inside `AppError.js`
   (see 3d).
 
 No named subclasses (`NotFoundError`, `ValidationError`, ...) - the thrower
-passes the code by hand every time. Fine to start; subclasses are the usual
-later refinement once the same `(message, code)` pairs keep repeating.
+passes the code by hand each time. Fine to start; subclasses are the usual later
+refinement once the same `(message, code)` pairs keep recurring.
 
 ### 4b. `ResponseFormatter.js`
 
-A class of four static builders, no instances (same pattern as `SecurityUtils`).
-Every method stamps `timestamp: new Date().toISOString()`.
+**What we did.** Added a 45-line file: one class, `ResponseFormatter`, with four
+static methods and no instances (same shape as `SecurityUtils` in Phase 02).
+Each method returns a plain object; none of them touch `res`.
 
-| Method | Shape it returns | Used for |
+**What it does.** Each method builds one variant of the standard response
+envelope, stamped with `timestamp: new Date().toISOString()`. A route calls, say,
+`ResponseFormatter.success(user)` and passes the result to
+`res.status(200).json(...)`. Every endpoint that does this sends the same
+outer shape, so the frontend parses one structure everywhere.
+
+| Method | Object it returns | Called for |
 |---|---|---|
 | `success(data = null, message = "success", statusCode = 200)` | `{ success: true, data, message, statusCode, timestamp }` | Any 2xx reply with a payload. |
-| `error(message = "error", statusCode = 500, error = null)` | `{ success: false, error, message, statusCode, timestamp }` | Any failure. Mirror of `success` with the payload slot renamed `error`. |
-| `validationError(error = null)` | `{ success: false, error, message: "Validation Failed", timestamp }` | Bad request body; `error` holds the field-level list. Preset message for the common case. |
-| `paginated(data = null, page, limit, total)` | `{ success: true, data, pagination: { page, limit, total, totalPages }, timestamp }` | List endpoints; adds "where am I in the set" info. |
+| `error(message = "error", statusCode = 500, error = null)` | `{ success: false, error, message, statusCode, timestamp }` | Any failure. Mirror of `success`, payload slot renamed `error`. |
+| `validationError(error = null)` | `{ success: false, error, message: "Validation Failed", timestamp }` | A bad request body; `error` holds the field-level list. Preset message for the common case. |
+| `paginated(data = null, page, limit, total)` | `{ success: true, data, pagination: { page, limit, total, totalPages }, timestamp }` | List endpoints; adds "where am I in the set". |
 
-The intent is right - one shape, computed `totalPages`, plain objects returned
-not sent. But the four methods do not yet agree with each other on their own
-fields (see Issues 1-6).
+**Why it is built this way.**
+
+- **One envelope, always** - so the client writes `if (res.success) use(res.data)
+  else show(res.message)` once instead of special-casing every route (see 3e).
+- **`data` on success, `error` on failure** - the same slot, named for what it
+  holds, so the client knows which to read from the `success` flag alone.
+- **Returns a plain object, does not call `res.json`** - formatting and transport
+  stay separate; the route decides status and sending, the formatter only builds
+  the shape.
+- **`paginated` computes `totalPages = Math.ceil(total / limit)` server-side** -
+  the server already has `total` from the query count, so every client gets the
+  same number and none of them round it wrong (see 3f).
+- **Static methods, no state** - it is a namespace of pure functions;
+  `new ResponseFormatter()` would be pointless.
+
+The intent is right, but the four methods do not yet agree with each other on
+their own fields - `statusCode` is present in two and absent in two, and the
+argument order flips between `success` and `error` (Issues 1-6).
 
 ---
 
