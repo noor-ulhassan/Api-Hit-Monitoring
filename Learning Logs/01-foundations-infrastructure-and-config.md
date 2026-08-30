@@ -124,6 +124,13 @@ not be fine for, say, account balances.
 Using the right engine per shape is cheaper than bending one engine to do both.
 The cost is operational: two datastores to run, back up, and monitor.
 
+> **Correction (added during Phase 04).** The split above is the plan as it stood
+> in this phase; it changed. Phase 02 moved `User` / `Client` / `ApiKey` into
+> **MongoDB**, not PostgreSQL. Phase 04 then gave PostgreSQL a different job:
+> pre-aggregated analytics rollups (`endpoint_metrics`). Net state now: Mongo
+> holds accounts *and* raw hits; Postgres holds the rollup table. Treat this
+> section as history, not as the current architecture.
+
 ---
 
 ## 4. Repository layout
@@ -161,7 +168,7 @@ Api-Hit-Monitoring/
 - **`src/shared/` exists because two processes share one codebase.** The
   producer and the consumer both need config, the logger, the DB clients, and
   the models. Those belong to neither process, so they do not live under a
-  `producer/` or `consumer/` folder. When feature modules arrive they will sit
+  `producer/` or `consumer/` folder. The intent is that feature modules sit
   next to `shared/`, not inside it.
 - **`config/` is the only place allowed to read `process.env`.** Centralising it
   means one file to audit for missing settings, one file to change when a
@@ -250,8 +257,8 @@ One module exports one object. Sections: `node_env`, `port`, `mongo`,
   turns the string into a real boolean; the string `"false"` is truthy
   otherwise.
 - **Retry knobs (`retryAttempts`, `retryDelay`) are declared before the retry
-  code exists.** Writing the config first is a way of committing to the plan:
-  RabbitMQ will get bounded reconnect-with-backoff.
+  code exists.** The config names a reconnect-with-backoff behaviour that the
+  RabbitMQ module does not implement yet - the knobs are a placeholder for it.
 
 ### `.env` today (not committed)
 
@@ -288,9 +295,9 @@ not in production.
   is not searchable across many processes.
 - **`format.errors({ stack: true })`** keeps the stack trace when an `Error`
   object is logged, instead of it collapsing to `{}`.
-- **`defaultMeta.service`** tags every line so producer and consumer logs remain
-  distinguishable once they land in the same place. The consumer will later
-  override this with its own service name.
+- **`defaultMeta.service`** tags every line so that if a second process (a
+  consumer) ever logs to the same place, its lines can be told apart - it would
+  set its own `service` value.
 - **Separate transports** = separate output destinations with their own level.
   `error.log` is the "what broke" file; `combined.log` is the full record.
 
@@ -533,26 +540,23 @@ and this `Learning Logs/` folder.
 
 ---
 
-## 12. What comes next (expected)
+## 12. Not yet built at the end of this phase
 
-Roughly the tutorial's likely order:
+This log does not predict how later phases will be designed. Earlier drafts of
+this section did, and the guesses did not survive the next few commits (the
+storage split changed, among other things - see the note in section 3). What is
+factual is the gap: as of `1d2f210`, none of the product's actual behaviour
+exists. Still absent -
 
-1. Define schemas: `User`, `Client`, `ApiKey` (PostgreSQL), `ApiHits`
-   (MongoDB). Write `scripts/init.postgres.sql` and fix its filename.
-2. Fix the `mongodb.js` and `logger.js` bugs above.
-3. Turn `server.js` into a real bootstrap: load config, init logger, connect
-   PostgreSQL + RabbitMQ, mount middleware (`helmet`, `cors`, `express.json`,
-   rate limiter), mount routes, add 404 + error handler, register
-   `SIGTERM`/`SIGINT` handlers that call every `close()`.
-4. Auth: register/login, password hashing with `bcryptjs`, JWT issue/verify
-   middleware.
-5. API key management: create/list/revoke, store only a hash of each key.
-6. Ingest endpoint: authenticate by API key, validate payload, publish a hit
-   message, return `202 Accepted` fast.
-7. Consumer process: connect, `consume` `api_hits`, batch-insert into MongoDB,
-   `ack` on success, `nack(false, false)` to DLQ on failure. Own entry file +
-   `Dockerfile.consumer`.
-8. Analytics endpoints: aggregations over the hit collection.
-9. RabbitMQ reconnect-with-backoff using the existing retry config.
-10. Hardening: required-secret assertions in production, request logging,
-    health/readiness endpoints, then fill the Dockerfiles.
+- Schemas for `User`, `Client`, `ApiKey`, `ApiHits` (the files are empty).
+- Any HTTP route beyond the `server.js` stub: no auth, no API-key issuance, no
+  ingest endpoint.
+- The consumer process that drains `api_hits` and writes storage. No entry file,
+  no `Dockerfile.consumer` content.
+- Analytics or aggregation over the hit stream.
+- RabbitMQ reconnect-with-backoff, though `retryAttempts` / `retryDelay` are
+  already in config.
+- Tests, linter/formatter config, CI.
+- Filled Dockerfiles.
+
+The bugs and infra mismatches to clear first are in section 10.

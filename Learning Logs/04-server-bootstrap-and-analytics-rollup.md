@@ -37,16 +37,15 @@ Three files, one theme: turning a pile of modules into a running process.
 
 Phases 01-03 built parts with no assembly point: config, logger, three
 connection singletons, four models, two utility classes. Nothing ran. This phase
-is the assembly point. After it (once Issue 1 is fixed) `npm run dev` produces a
-live HTTP server with health checks and clean shutdown - the frame that auth,
-ingest, and analytics routes will bolt onto.
+is the assembly point. Once Issue 1 is fixed, `npm run dev` produces a live HTTP
+server with health checks and clean shutdown - a frame with somewhere to add
+routes.
 
-It also answers a question left open since Phase 02: **where do the analytics
-aggregates live?** Phase 01 planned Mongo for "events + aggregates"; Phase 02
-moved accounts to Mongo; this phase puts the aggregates in **PostgreSQL**
-(`endpoint_metrics`). The split is now: raw hits in Mongo (`ApiHits`, 30-day
-TTL), rolled-up metrics in Postgres. See Issue 16 - the Phase 01 architecture
-diagram is now out of date in two different ways.
+This phase also reintroduces PostgreSQL, which Phase 02 had left with no caller.
+Its job here is not what Phase 01 planned (accounts): it holds `endpoint_metrics`,
+a pre-aggregated rollup table. Storage now stands at: raw hits and accounts in
+Mongo, rolled-up metrics in Postgres. Phase 01 section 3 carries a dated
+correction covering the two shifts.
 
 ---
 
@@ -145,16 +144,16 @@ latency" by scanning millions of raw `ApiHits` documents on every dashboard load
 is slow and only gets slower. The fix is to **compute the answer once, as data
 arrives, and store the summary.**
 
-`endpoint_metrics` is that summary. The consumer (not built yet) will, for each
-hit, find-or-create the row for its (client, service, endpoint, method, time
-bucket) and increment `total_hits`, add to `error_hits` if the status was an
-error, and fold the latency into `avg/min/max`. Dashboards then read a small,
-indexed table instead of aggregating a firehose.
+`endpoint_metrics` is that summary. Its columns describe how it is meant to be
+maintained: for each hit, find-or-create the row for its (client, service,
+endpoint, method, time bucket), bump `total_hits`, bump `error_hits` when the
+status is an error, and fold the latency into `avg/min/max`. Whatever writes it
+(the consumer, once built) does that folding as hits arrive; dashboards then read
+a small, indexed table instead of aggregating a firehose. Nothing writes it yet.
 
-Trade-off: the rollup is derived data that can drift or be wrong if the consumer
-has a bug, and it fixes the query shapes in advance - a question the buckets
-don't support still needs the raw events (which is why raw hits are kept for 30
-days).
+Trade-off: the rollup is derived data that drifts or goes wrong if the writer has
+a bug, and it fixes the query shapes in advance - a question the buckets do not
+support still needs the raw events (which is why raw hits are kept for 30 days).
 
 ### 3h. Time bucketing
 
@@ -169,11 +168,11 @@ request.
 
 `UNIQUE(client_id, service_name, endpoint, method, time_bucket)`
 (`init.postgress.sql:16`, commented "Insert | Update") is not just a data-integrity
-rule - it is the **target of an upsert**. The consumer will run
+rule - it is shaped to be the **target of an upsert**:
 `INSERT ... ON CONFLICT (those five columns) DO UPDATE SET total_hits =
 endpoint_metrics.total_hits + EXCLUDED...`. Without a unique constraint on the
 grouping key, `ON CONFLICT` has nothing to match and the "increment the existing
-bucket" pattern is a race between read and write.
+bucket" pattern becomes a race between a read and a write.
 
 ### 3j. SQL has no automatic timestamps - hence the trigger
 
@@ -334,9 +333,10 @@ totals (`total_hits`, `error_hits`) and latency stats (`avg_latency`,
 
 **Why it exists.** Answering "hits per hour for `/orders` last week, with average
 latency" by scanning millions of raw `ApiHits` documents on every dashboard load
-does not scale. Instead the consumer (not built yet) folds each incoming hit into
-its bucket row as it arrives, and dashboards read this small, indexed table. Raw
-hits are still kept 30 days for the questions fixed buckets cannot answer.
+does not scale. The rollup exists so that folding-in happens once, as hits
+arrive, and dashboards read this small indexed table instead. Raw hits are still
+kept 30 days for the questions fixed buckets cannot answer. Nothing folds hits in
+yet - the writer does not exist.
 
 **Why each piece:**
 
@@ -346,7 +346,7 @@ hits are still kept 30 days for the questions fixed buckets cannot answer.
   10:25 is attributed to the 10:00 bucket, and every hit that hour updates the
   same row.
 - **`UNIQUE(client_id, service_name, endpoint, method, time_bucket)`** is not
-  only an integrity rule, it is the target of an upsert. The consumer will run
+  only an integrity rule, it is shaped to be an upsert target - a writer can do
   `INSERT ... ON CONFLICT (those columns) DO UPDATE SET total_hits =
   total_hits + 1, ...`. With no unique constraint on the grouping key,
   `ON CONFLICT` has nothing to match and "increment the existing bucket" becomes
@@ -359,9 +359,10 @@ hits are still kept 30 days for the questions fixed buckets cannot answer.
   key is possible; the string is an opaque cross-store pointer the consumer must
   keep honest (Issue 15).
 - **Four indexes** (`client_id`; `(client_id, service_name)`; `time_bucket`;
-  `(client_id, service_name, endpoint)`) cover the query prefixes the analytics
-  endpoints will issue - the same left-prefix logic as the Mongo compound indexes
-  in Phase 02.
+  `(client_id, service_name, endpoint)`) cover the obvious read patterns for this
+  table - by tenant, by tenant + service, by time range, by tenant + service +
+  endpoint - using the same left-prefix logic as the Mongo compound indexes in
+  Phase 02.
 - **The `updated_at` trigger** - Mongoose maintains `createdAt` / `updatedAt` for
   free with `timestamps: true`; raw SQL does not, so a `BEFORE UPDATE ... FOR
   EACH ROW` trigger sets `NEW.updated_at = CURRENT_TIMESTAMP` on every write.
@@ -426,10 +427,10 @@ Blunt list.
 15. **`endpoint_metrics.client_id` is an unvalidated string.** No
     `CHECK (client_id ~ '^[0-9a-f]{24}$')`, and no FK is possible (it points at
     a Mongo document). Cross-store integrity is entirely the consumer's job.
-16. **The storage split changed again and the docs did not.** Phase 01: Postgres
-    = accounts. Phase 02: accounts moved to Mongo. Phase 04: Postgres =
-    analytics rollups, Mongo = raw hits + accounts. The Phase 01 architecture
-    diagram is wrong twice over now. Add a dated correction there.
+16. **The storage split changed again.** Phase 01: Postgres = accounts. Phase 02:
+    accounts moved to Mongo. Phase 04: Postgres = analytics rollups, Mongo = raw
+    hits + accounts. A dated correction note has been added under Phase 01
+    section 3; the diagram there is history, not the current architecture.
 
 ### Deferred by design
 
@@ -479,24 +480,18 @@ Blunt list.
 
 ---
 
-## 8. What comes next (expected)
+## 8. Not yet built at the end of this phase
 
-1. **Make it start**: fix Issue 1 (`import cors`) and Issue 2 (`err.statusCode`).
-   Nothing below runs until the process boots.
-2. **Fix the connection-module bugs** flagged since Phase 01 - `initializeConnection`
-   depends on all three.
-3. **Rename `init.postgress.sql` -> `init.postgres.sql`** and confirm compose
-   mounts it; verify `endpoint_metrics` is created on a fresh `docker compose
-   up`.
-4. **Harden `errorHandler`**: honour `err.isOperational`, level-appropriate
-   logging, generic message for non-operational errors.
-5. **Route the 404 through the error handler** so there is one error-formatting
-   path.
-6. **Auth routes** (`/api/auth`): register + login, using `SecurityUtils`,
-   `User`, `ResponseFormatter`, and throwing `AppError`. First real exercise of
-   the whole stack.
-7. **Ingest route** (`/api/hit`): authenticate by API key, validate, publish to
-   `api_hits`, `202` fast.
-8. **The consumer**: drain `api_hits`, insert raw `ApiHit` docs, and upsert
-   `endpoint_metrics` buckets. Own entry file + `Dockerfile.consumer`.
-9. **Analytics routes** (`/api/analytics`): read `endpoint_metrics`.
+No guess at how later phases will be shaped. The facts, as of this working tree:
+
+- The server does not start (Issue 1). Once it does, the Phase 01/02
+  connection-module bugs are in the path (section 5, "Deferred by design").
+- `/api/auth`, `/api/hit`, `/api/analytics` are named in the `GET /` response but
+  not mounted. No auth, no rate limiting, no JWT verification.
+- The consumer process does not exist - nothing drains `api_hits` or writes
+  `endpoint_metrics`.
+- `init.postgress.sql` is still not wired to run (Issue 6), so
+  `endpoint_metrics` is not created on any environment.
+- Both Dockerfiles are still empty.
+
+The fix list for what *is* already written is section 5.

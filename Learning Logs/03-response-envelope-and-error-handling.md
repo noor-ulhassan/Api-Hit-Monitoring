@@ -21,11 +21,11 @@ Two files, one concern: the boundary between the app and the HTTP client.
 - `src/shared/utils/AppError.js` - a custom `Error` subclass that attaches a
   status code and a classification flag to the error object, so one central
   handler can turn any `throw` into the correct response.
-- `src/shared/utils/ResponseFormatter.js` - static builders that return the
-  single response-object shape every endpoint will send: `success`, `error`,
+- `src/shared/utils/ResponseFormatter.js` - static builders that return one
+  standard response-object shape, in four variants: `success`, `error`,
   `validationError`, `paginated`.
 
-No middleware wires them in. That is the next phase.
+No middleware wires them in yet.
 
 ---
 
@@ -151,9 +151,10 @@ new object.
 404)`, the thrown object is a normal `Error` (it has `.message` and `.stack`)
 *plus* three extra fields the rest of the app can read: `.statusCode` (the HTTP
 code this error should produce), `.errors` (optional structured detail), and
-`.isOperational` (always `true`). The central error middleware - built in Phase
-04 - reads those fields to decide what status and body to send. Nothing throws an
-`AppError` yet; this is the type the error path will be built around.
+`.isOperational` (always `true`). An error-handling middleware can read those
+fields to decide what status and body to send. As of this phase nothing throws
+an `AppError` and no middleware consumes one; the file is the primitive, not yet
+wired to anything.
 
 **Why it is built this way.**
 
@@ -168,9 +169,9 @@ code this error should produce), `.errors` (optional structured detail), and
   rejected form.
 - **`isOperational = true`, hard-coded** - being an `AppError` *is* the
   definition of "an error I threw on purpose" (see 3b). You never construct a
-  non-operational one; that is just a bare `Error`. A raw `TypeError` reaching
-  the handler therefore has no `isOperational`, which is exactly how the handler
-  tells a deliberate error from a bug.
+  non-operational one; that is just a bare `Error`. A raw `TypeError` has no
+  `isOperational` field, which is how a handler *can* tell a deliberate error
+  from a bug - if it checks (the Phase 04 handler does not; see that log).
 - **`Error.captureStackTrace(this, this.constructor)`** - a V8 feature that
   builds `.stack` while omitting the frames inside this constructor, so the trace
   starts at the `new AppError(...)` call site instead of inside `AppError.js`
@@ -235,8 +236,8 @@ Blunt list.
    middleware must set both from one value.
 3. **`error` vs `errors` naming clash.** `AppError` stores detail in
    `this.errors` (plural); `ResponseFormatter.error()` / `validationError()`
-   take `error` (singular). The middleware will bridge `err.errors -> error` -
-   it works, it reads badly. Pick one spelling project-wide.
+   take `error` (singular). Any middleware bridging `err.errors` into the
+   `error` argument works but reads badly. Pick one spelling project-wide.
 4. **Argument order flips between the two mirrors.**
    `success(data, message, statusCode)` vs `error(message, statusCode, error)` -
    the `message` / `statusCode` slots move. Easy to mis-call. Align them.
@@ -280,25 +281,18 @@ Uncommitted at time of writing: this file and its README row.
   structure instead of twenty.
 - **Fail-safe default.** When information is missing, pick the option that makes
   failure visible and safe - here, HTTP 500 rather than 200.
-- **Central error-handling middleware.** (Next phase.) One Express
-  `(err, req, res, next)` that every route's errors funnel into; it reads
-  `err.statusCode` / `err.isOperational`, formats with `ResponseFormatter`, and
-  logs bugs.
+- **Central error-handling middleware.** One Express `(err, req, res, next)`
+  that every route's errors funnel into and that formats each as a
+  `ResponseFormatter.error` envelope. Added in Phase 04.
 
 ---
 
-## 8. What comes next (expected)
+## 8. Status after this phase
 
-1. The **error-handling middleware**: an Express `(err, req, res, next)` that
-   checks `err.isOperational`, uses `err.statusCode || 500`, formats with
-   `ResponseFormatter.error` / `.validationError`, logs non-operational errors
-   through the Winston logger, and never leaks a stack trace to the client.
-2. A **404 handler** for unmatched routes that throws
-   `new AppError("Not Found", 404)`.
-3. Decide whether an **async wrapper** (`catchAsync`) is needed. Express 5
-   forwards rejected promises to the error middleware on its own (Phase 01,
-   section 5), so it may not be.
-4. **Reconcile the four `ResponseFormatter` shapes** (Issues 1-6) before routes
-   start depending on them.
-5. First real routes - auth register/login - exercising both utilities end to
-   end.
+Neither file is used yet: no middleware reads `AppError`, no route calls
+`ResponseFormatter`. An earlier draft of this section predicted the shape of the
+error-handling middleware; it was removed because Phase 04
+(`04-server-bootstrap-and-analytics-rollup.md`) built that middleware and it
+does not match the prediction (it never checks `err.isOperational`, and the 404
+path formats its own response rather than throwing an `AppError`). The
+`ResponseFormatter` field inconsistencies in section 5 are still open.

@@ -9,9 +9,10 @@ four Mongoose schemas and one password-policy class. Nothing imports them yet.
 route touches a model, and the consumer does not exist. Because nothing imports
 the models, a broken import path inside two of them (see Issue 1) has not thrown
 yet. The PostgreSQL model layer that Phase 01 planned (section 3, "Why two
-databases") has been dropped without a note: `User`, `Client`, and `ApiKey` are
-now MongoDB documents, `scripts/init.postgress.sql` is still empty, and
-`config/postgres.js` is no longer referenced by anything.
+databases") is gone: `User`, `Client`, and `ApiKey` are now MongoDB documents,
+`scripts/init.postgress.sql` is still empty, and `config/postgres.js` is not
+referenced by anything in this phase. (Phase 01 section 3 now carries a dated
+correction; Phase 04 gives PostgreSQL a new role.)
 
 The code is in git. This file is for the reasoning that is not: why each schema
 is shaped the way it is, which decisions are load-bearing, and what was traded
@@ -52,18 +53,18 @@ This phase does not follow that. Every model here is
 
 - `scripts/init.postgress.sql` (already misnamed, Phase 01 Issue 10) is now not
   just empty but unused - there is no relational schema to bootstrap.
-- `config/postgres.js`, its pool, its smoke test, and the `pg` dependency are
-  dead weight until something else needs SQL.
+- `config/postgres.js`, its pool, its smoke test, and the `pg` dependency have
+  no caller in this phase.
 - Cross-model references (`clientId`, `createdBy`, `apiKeyId`) are now all
   `ObjectId` references inside one Mongo database, resolvable with
   `populate()` - but with **no foreign-key enforcement** (MongoDB has none).
   Referential integrity becomes an application responsibility (Issue 18).
 
 This is a legitimate simplification for a tutorial - one datastore to run, one
-query language, `populate()` instead of joins - but it is a reversal of a
-documented decision. Either update the Phase 01 architecture section with a dated
-correction, or treat the move as provisional and plan the migration back. It
-must not stay undocumented.
+query language, `populate()` instead of joins - but it reverses a decision
+documented in Phase 01. That log now carries a dated correction note (section 3).
+This document does not try to say where the storage design goes next; Phase 04 is
+where PostgreSQL comes back, with a different job.
 
 ---
 
@@ -95,14 +96,14 @@ Each model validates at up to three levels:
 3. **An external policy object** - `SecurityUtils.validatePassword`, called from
    inside the `User.password` validator.
 
-The password policy is pulled out of the model on purpose. The registration
-route will need to validate a candidate password and return a list of specific
-failures *before* it ever constructs a `User`. A rule buried in a schema
-validator cannot be called from a controller; a static method on a plain class
-can, and can be unit-tested with no database. The class docstring states the
-intent to grow it into token generation, key generation, and encryption - it is
-the future home for anything security-shaped that more than one model or route
-needs.
+The password policy is pulled out of the model on purpose. A caller - a
+controller, a test - may need to validate a candidate password and get back a
+list of specific failures without constructing a `User` at all. A rule buried in
+a schema validator cannot be called from outside the model; a static method on a
+plain class can, and can be unit-tested with no database. The class docstring
+also states an intent to grow it into token generation, key generation, and
+encryption, so it is a natural home for security-shaped helpers more than one
+model needs.
 
 ### 3c. Validator timing vs middleware timing (the reason for the `$2a$` guard)
 
@@ -135,15 +136,16 @@ cost factor `10` means `2^10` key-expansion rounds per hash - deliberately slow,
 to make offline brute-force expensive. The salt is per-password and stored
 inside the resulting hash string, so two users with the same password get
 different hashes and precomputed-table attacks do not apply. Plaintext is never
-stored and never compared directly; login will call `bcrypt.compare(candidate,
-storedHash)`. Note the field is still selectable by default (Issue 4) and no
-`comparePassword` helper exists yet (Issue 5).
+stored and never compared directly; verifying a password means
+`bcrypt.compare(candidate, storedHash)`. Note the field is still selectable by
+default (Issue 4) and no `comparePassword` helper exists yet (Issue 5).
 
 ### 3e. Multi-tenancy and the partition key
 
 `Client` is the tenant. `User`, `ApiKey`, and `ApiHit` each carry a `clientId`.
-Every analytics query and every access check will filter by it, so `clientId` is
-the **first field in almost every compound index** in this phase. A
+The schema is built on the assumption that tenant-scoped reads and access checks
+filter by it, which is why `clientId` is the **first field in almost every
+compound index** in this phase. A
 `super_admin` user is the one row allowed to have no `clientId` - platform staff
 are not tenants - expressed as `required: function () { return this.role !==
 "super_admin"; }`.
@@ -198,9 +200,9 @@ Each walkthrough below runs the same pass: **what we did**, **what it does**,
 **What it does.** `SecurityUtils.validatePassword("hunter2")` returns
 `{ success: false, errors: [ "Password must be at least 8 chars long!", ... ] }`
 - a boolean plus every rule the password broke. The `User` model calls it from
-its password validator, and the registration route will call it directly so it
-can reject a weak password with specific reasons *before* a `User` is
-constructed.
+its password validator. Being a plain static method, it can also be called
+directly - by a controller, a test, a seed script - without constructing a
+`User` first; that reuse is the reason it lives outside the model.
 
 **Why it is built this way.**
 
@@ -300,9 +302,9 @@ sub-document (`dataRetentionDays`, `alertsEnabled`, `timezone`). One index on
 
 **What it does.** It is the row everything else points at: `User.clientId`,
 `ApiKey.clientId`, and `ApiHit.clientId` are all references to a `Client._id`.
-`settings` is where per-tenant behaviour (retention window, alerting, report
-timezone) will be read from. On `save()` it enforces the `slug` format and the
-required `createdBy`. Not wired up yet.
+The `settings` sub-document is a place to hold per-tenant behaviour (retention
+window, alerting, report timezone). On `save()` it enforces the `slug` format and
+the required `createdBy`. Not wired up yet.
 
 **Why each decision:**
 
@@ -318,8 +320,8 @@ required `createdBy`. Not wired up yet.
 - **`settings.dataRetentionDays`** defaults to 30, bounded 7-365. The intent is
   per-tenant control of how long raw hits are kept - but the `ApiHits` TTL is a
   single global 30-day index and never reads this value (Issue 10).
-- **`settings.alertsEnabled`, `settings.timezone`** are declared now so alerting
-  and time-bucketed reporting have somewhere to read from later.
+- **`settings.alertsEnabled`, `settings.timezone`** are declared now as
+  placeholders - fields with defaults, no code reads them.
 - **One index**: `{ isActive: 1 }` to list live tenants.
 - **`email` has no format validator** (unlike `User.email`) and **`website`
   accepts any string** - inconsistent with the care taken elsewhere (Issue 17).
@@ -336,13 +338,13 @@ identity (`keyId`, `keyValue`), ownership (`clientId`, `createdBy`), labels
 block. Four compound indexes plus an `isExpired()` instance method.
 `timestamps: true`, `collection: "api_keys"`.
 
-**What it does.** It is the lookup target on the ingest hot path: a request
-arrives with a key, the server finds the `ApiKey` by `keyValue`, checks
-`isActive`, `permissions.canIngest`, the IP / origin allow-lists, and `expiresAt`
-before accepting the hit. The `{ expiresAt: 1 }` TTL index also makes Mongo
-delete the key document itself once it expires (Issue 9). As written the model
-cannot actually be saved - `keyId` and `keyValue` are `required` but nothing
-generates them (Issue 8).
+**What it does.** The schema's shape describes its intended job: authenticate an
+ingest request. The fields exist to be checked against an incoming key -
+`keyValue` to match it, `isActive` / `expiresAt` for validity,
+`permissions.canIngest` and the IP / origin allow-lists for authorization. The
+`{ expiresAt: 1 }` TTL index also makes Mongo delete the key document once it
+expires (Issue 9). As written the model cannot be saved at all: `keyId` and
+`keyValue` are `required` but nothing generates them (Issue 8).
 
 **Field groups and why they exist:**
 
@@ -397,11 +399,11 @@ time, separate from the auto `createdAt` insert time), `serviceName`, `endpoint`
 `timestamps: true`, `collection: "api_hits"` - the same name as the RabbitMQ
 queue, by intent.
 
-**What it does.** This is the model the consumer will insert into once per
-message it pulls off `api_hits`. Nothing references it, but no nested objects and
-minimal validation mean an insert is as cheap as possible. The TTL index makes
+**What it does.** This is the model meant to receive one insert per message the
+consumer pulls off `api_hits`. Nothing references it yet, but the flat structure
+and minimal validation keep an insert as cheap as possible. The TTL index makes
 Mongo drop each document 30 days after its `timestamp`, so the raw collection
-stays bounded while the (not-yet-built) aggregates keep the long-term record.
+stays bounded while aggregates (not yet built) keep the long-term record.
 
 **Why it looks the way it does:**
 
@@ -445,11 +447,10 @@ written, not before.
 
 `User.role` (an enum) and `User.permissions` (four booleans) both express
 authority, and `ApiKey.permissions` adds a third surface for keys. Nothing maps
-between them: creating a `client_admin` does not set `canManageUsers`. Pick one
-model as the source of truth - almost certainly "role implies a default
-permission set, individual flags override" - and enforce it in a `pre('save')`
-hook. Until then, every access check has to consult both and hope they agree
-(Issue 12).
+between them: creating a `client_admin` does not set `canManageUsers`. One of the
+two needs to be the source of truth, with the relationship enforced somewhere
+(a `pre('save')` hook, or the access-check layer). Until then, every access check
+has to consult both and hope they agree (Issue 12).
 
 ### 9c. Referential integrity is now the app's job
 
@@ -502,10 +503,11 @@ Blunt list. Bugs found while writing this log, plus deferrals.
    model is loaded. It has not surfaced only because nothing imports the models
    yet. Fix: rename the file to `SecurityUtils.js` (matches the class name and
    both import sites).
-2. **Polyglot-persistence plan abandoned silently.** Phase 01 section 3 put
-   `User` / `Client` / `ApiKey` in PostgreSQL; all three are now Mongoose.
-   `scripts/init.postgress.sql` is empty and `config/postgres.js` is unused.
-   Add a dated correction to the Phase 01 log or record this as provisional.
+2. **Polyglot-persistence plan changed.** Phase 01 section 3 put `User` /
+   `Client` / `ApiKey` in PostgreSQL; all three are now Mongoose. A dated
+   correction note is now under Phase 01 section 3. Phase 04 later gave Postgres
+   a new job (analytics rollups), so `config/postgres.js` is not dead after all -
+   but at the end of *this* phase it is still unused.
 3. **`process.env` read outside `config/index.js`.** `SecurityUtil.js:8-14`
    (five vars) and `ApiKey.js:103` (`API_KEY_EXPIRY_DAYS`) read the environment
    directly, breaking the single-boundary rule from Phase 01 section 6. Move
@@ -514,8 +516,8 @@ Blunt list. Bugs found while writing this log, plus deferrals.
    transform, so `User.find()` returns the bcrypt hash in every payload. Add
    `select: false` and a `toJSON` that deletes `password`.
 5. **No `comparePassword` method.** `User` hashes on save but offers no way to
-   verify a candidate; login will re-implement `bcrypt.compare` elsewhere. Add
-   `userSchema.methods.comparePassword`.
+   verify a candidate, so any password check has to call `bcrypt.compare`
+   directly against the stored hash. Add `userSchema.methods.comparePassword`.
 6. **Two disagreeing minimum lengths.** `User.password` schema `minlength: 6`
    vs `SecurityUtils` default `minLength: 8`. Align them.
 7. **`$2a$` guard is wrong and incomplete.** `bcryptjs@^3.0.3` emits `$2b$`
@@ -594,28 +596,17 @@ Working tree is clean at time of writing; everything in this phase is committed.
 
 ---
 
-## 13. What comes next (expected)
+## 13. Not yet built at the end of this phase
 
-1. **Fix the blockers**: rename `SecurityUtil.js` -> `SecurityUtils.js` (Issue
-   1); fix the `mongodb.js` singleton/this-binding bugs (Phase 01 Issues 1-3);
-   fix `logger.js` Issue 4. Nothing below runs until these are done.
-2. **Decide and record the datastore direction** (Issue 2): commit to Mongo-only
-   and correct the Phase 01 architecture, or plan the move back to Postgres for
-   accounts.
-3. **Fold the new env vars into `config/index.js`** (Issue 3) and add a
-   `password` / `apiKey` section.
-4. **Harden `User`**: `select: false` on `password`, a `toJSON` transform,
-   `comparePassword`, and align the length minimums.
-5. **Key generation in `SecurityUtils`**: generate `keyId` / `keyValue`, store a
-   hash of the secret, expose it once on creation.
-6. **`server.js` bootstrap**: load config, init logger, `mongoose.connect`,
-   register the models, mount middleware and routes, add shutdown handlers.
-7. **Auth**: register (calls `SecurityUtils.validatePassword` before building the
-   `User`), login (`comparePassword`, issue JWT), verify middleware.
-8. **Seed script** for the first `super_admin` and first `Client` (Issue 16).
-9. **Ingest endpoint**: authenticate by `keyValue`, check `permissions.canIngest`
-   and the IP/origin allow-lists, publish a hit message, return `202` fast.
-10. **Consumer**: consume `api_hits`, batch-insert `ApiHit` documents, `ack` /
-    `nack`-to-DLQ.
-11. **Aggregation models + analytics endpoints**, then prune the `ApiHits`
-    index set to what those queries actually use.
+No prediction of later design here - just the gaps. As of `96ab4e2`:
+
+- Nothing imports the models or `SecurityUtils`; no `mongoose.model` runs at
+  boot.
+- No routes, controllers, or auth.
+- No key generation: `ApiKey.keyId` / `keyValue` have no source, so an `ApiKey`
+  cannot be saved (Issue 8).
+- No seed path for the first `super_admin` / `Client` (Issue 16).
+- No aggregation models - only the raw `ApiHits` collection.
+- The consumer process still does not exist.
+
+The bugs to clear before any of this can run are in section 11.
