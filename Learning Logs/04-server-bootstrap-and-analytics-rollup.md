@@ -400,6 +400,40 @@ Blunt list.
    `docker-compose.yaml` mounts `init.postgres.sql` (single "s"); the file is
    `init.postgress.sql`. Now that it has real content, it still never runs on
    first boot. Rename the file (or the compose path).
+
+   **Correction, 1 Sep 2026 — resolved.** The file was renamed
+   `scripts/init.postgress.sql` -> `scripts/init.postgres.sql` (`git mv`), so it
+   now matches the bind-mount path in `docker-compose.yaml`. A side effect had to
+   be cleaned up first: because the mount source `./scripts/init.postgres.sql`
+   did not exist as a file, Docker had created it as an **empty directory**, and
+   Postgres's entrypoint exits non-zero when
+   `/docker-entrypoint-initdb.d/init.postgres.sql` is a directory rather than a
+   `.sql` file — which is why the `api-monitoring-postgres` container never came
+   up and the app got `ECONNREFUSED` on `localhost:5432`. That directory was
+   removed.
+
+   Two further gotchas, not code bugs but worth recording:
+   - The init script only auto-runs on a **fresh** data volume. The existing
+     `postgres_data` volume already had a cluster, so Postgres logged
+     "Skipping initialization" and the schema had to be applied by hand
+     (`docker exec -i api-monitoring-postgres psql -U postgres -d api_monitoring
+     < scripts/init.postgres.sql`). `endpoint_metrics` + its 4 indexes + the
+     `updated_at` trigger now exist.
+   - `POSTGRES_PASSWORD` in the compose file is likewise only honoured on first
+     init. The pre-existing volume had a different password, giving
+     `password authentication failed for user "postgres"` (SQLSTATE 28P01) on the
+     TCP connection from Node (the in-container socket uses `trust`, so
+     `docker exec psql` masked it). Fixed with
+     `ALTER USER postgres WITH PASSWORD 'password'` to match `server/.env`.
+     Alternative, if data loss is acceptable: `docker compose down -v` then
+     `up -d` to let the volume re-init cleanly.
+
+   `server/.env` was also tidied in the same pass: trailing spaces stripped from
+   `PG_USER` / `PG_PASSWORD`, and `RABBITMQ_URL` credentials changed from
+   `api_user:secure_password` to `admin:12345` to match
+   `RABBITMQ_DEFAULT_USER` / `RABBITMQ_DEFAULT_PASS` in `docker-compose.yaml`.
+   `postgres.testConnection()` was run standalone against the container and
+   passed.
 7. **`errorHandler` logs everything at `error` level**, including 404s and
    validation failures. Real 5xx incidents will drown in 4xx noise. Log
    operational 4xx at `warn`/`info`, 5xx at `error`, keyed off

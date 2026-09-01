@@ -7,6 +7,7 @@ import mongodb from "./shared/config/mongodb.js";
 import postgres from "./shared/config/postgres.js";
 import rabbitmq from "./shared/config/rabbitmq.js";
 import ResponseFormatter from "./shared/utils/ResponseFormatter.js";
+import cors from "cors";
 import config from "./shared/config/index.js";
 dotenv.config();
 

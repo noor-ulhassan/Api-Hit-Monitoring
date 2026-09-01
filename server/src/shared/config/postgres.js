@@ -53,7 +53,7 @@ class postgresConnection {
       const client = await pool.connect();
       const result = await client.query("SELECT NOW()");
       client.release(); // Connection check hone ke baad client ko wapas pool me release kar dete hain
-      logger.info("Postgres Client connected", result.rows[0].now);
+      logger.info(`Postgres Client connected ${result.rows[0].now}`);
     } catch (error) {
       logger.error("Error in Postgres Client connection: ", error);
       throw error;

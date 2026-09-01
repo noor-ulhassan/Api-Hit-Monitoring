@@ -17,6 +17,7 @@ class MongoConnection {
       await mongoose.connect(config.mongo.url, {
         dbName: config.mongo.dbName,
       });
+      this.connection = mongoose.connection;
       logger.info(`MongoDb Connected ${config.mongo.url}`);
 
       //handle error
@@ -24,7 +25,7 @@ class MongoConnection {
         logger.error("MongoDB connection Error", err);
       });
       //handle disconnect
-      this.connection.on("Disconnected", () => {
+      this.connection.on("disconnected", () => {
         logger.error("MongoDB Disconnected");
       });
       //handle process exit
@@ -43,7 +44,7 @@ class MongoConnection {
       if (this.connection) {
         await mongoose.disconnect();
         this.connection = null;
-        logger.info("MongoDb Disconnected");
+        logger.info("MongoDb disconnected");
       }
     } catch (error) {
       logger.error("Error in MongoDB Disconnection: ", error);
@@ -56,4 +57,4 @@ class MongoConnection {
   }
 }
 
-export default MongoConnection;
+export default new MongoConnection();
