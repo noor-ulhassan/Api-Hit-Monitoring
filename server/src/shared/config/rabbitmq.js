@@ -28,7 +28,7 @@ class RabbitMqConnection {
     }
     try {
       this.isConnecting = true;
-      logger.info("Connecting to RabbitMQ", config.rabbitmq.url);
+      logger.info(`Connecting to RabbitMQ ${config.rabbitmq.url}`);
       this.connection = await amqp.connect(config.rabbitmq.url);
       this.channel = await this.connection.createChannel();
       // creating key
@@ -44,7 +44,7 @@ class RabbitMqConnection {
           "x-dead-letter-routing-key": dlqName,
         },
       });
-      logger.info("RabbitMQ connected", config.rabbitmq.queue);
+      logger.info(`RabbitMQ connected: queue=${config.rabbitmq.queue}`);
       this.connection.on("close", () => {
         logger.warn("Rabbit MQ Connection closed");
         this.connection = null;

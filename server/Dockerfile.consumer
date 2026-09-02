@@ -1,0 +1,15 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm install --production
+
+COPY . .
+
+RUN mkdir -p logs
+
+# Queue consumer entry point. src/consumer.js does not exist yet - this service
+# is gated behind the "consumer" compose profile until it does.
+CMD ["node", "src/consumer.js"]
