@@ -1,10 +1,13 @@
 # 04 - Server Bootstrap, Error Middleware, and the Analytics Rollup
 
-**Covers:** working-tree changes on top of commit `1cb8f56` - a full rewrite of
-`server/src/server.js`, a new `server/src/shared/Middleware/errorHandler.js`, and
-the first real contents of `server/scripts/init.postgress.sql`. Not yet
-committed at time of writing.
+**Covers:** a full rewrite of `server/src/server.js`, a new
+`server/src/shared/Middleware/errorHandler.js`, and the first real contents of
+`server/scripts/init.postgress.sql`. Committed as `b454598` "Server File
+initialized" (log refined later in `04c104e`).
 **Date range of work:** 29 Aug 2026.
+**Follow-up:** the connection-module bugs listed as open here, plus `import cors`
+and the SQL filename, are fixed in Phase 05 (`a0b0c11`); the app boots and runs
+containerised from `40eb9b7` on.
 **State of the app at end of this phase:** `server.js` is no longer a stub - it
 builds an Express app, mounts a middleware stack, serves `/` and `/health`,
 connects all three datastores before listening, and shuts down cleanly on a
@@ -381,7 +384,7 @@ Blunt list.
 
 1. **`cors` is used but never imported** (`server.js:17`). `ReferenceError: cors
    is not defined` at module load - the server does not start. Add
-   `import cors from "cors";`.
+   `import cors from "cors";`. *(Fixed in Phase 05, `a0b0c11`.)*
 2. **`errorHandler.js:5` reads `req.statusCode`; should be `err.statusCode`.**
    `req` has no such property, so every error is 500 unless an `err.name` branch
    overrides it. `new AppError("Not found", 404)` is reported as 500. Same typo
@@ -473,11 +476,12 @@ Blunt list.
 - The consumer process does not exist; nothing writes `endpoint_metrics` or
   drains `api_hits`.
 - No rate limiting (`express-rate-limit` still unused), no JWT verify middleware.
-- Both Dockerfiles still empty.
+- Both Dockerfiles still empty. *(Filled in Phase 05, `40eb9b7`.)*
 - The Phase 01/02 connection-module bugs (`mongodb.js` this-binding and
   singleton export, `logger.js` `winston.combine`, `rabbitmq.js` `getStatus`)
   are now on the critical path - `initializeConnection()` calls straight into
-  them.
+  them. *(`mongodb.js` and `logger.js` fixed in Phase 05, `a0b0c11`;
+  `rabbitmq.getStatus` still open.)*
 
 ---
 
@@ -486,7 +490,8 @@ Blunt list.
 | Commit | What landed and why |
 |---|---|
 | `1cb8f56` Learning Logs update | The Phase 03 log (`03-response-envelope-and-error-handling.md`) and its README row. No code. |
-| *(uncommitted)* | `server.js` rewritten from stub to a real bootstrap: middleware stack, `/` + `/health`, 404, error handler, connect-before-listen startup, graceful shutdown, process safety nets. `Middleware/errorHandler.js` added: Express 4-arg error middleware mapping Mongoose/JWT errors to a `ResponseFormatter.error` envelope. `init.postgress.sql` filled: `endpoint_metrics` rollup table + indexes + `updated_at` trigger. |
+| `b454598` Server File initialized | `server.js` rewritten from stub to a real bootstrap: middleware stack, `/` + `/health`, 404, error handler, connect-before-listen startup, graceful shutdown, process safety nets. `Middleware/errorHandler.js` added: Express 4-arg error middleware mapping Mongoose/JWT errors to a `ResponseFormatter.error` envelope. `init.postgress.sql` filled: `endpoint_metrics` rollup table + indexes + `updated_at` trigger. Also carried the Phase 02/03 log edits. |
+| `04c104e` Logs Improved | Wording and structure edits to this and the earlier logs. No code. |
 
 ---
 
