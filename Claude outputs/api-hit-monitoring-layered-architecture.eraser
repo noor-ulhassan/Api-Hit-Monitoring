@@ -1,0 +1,45 @@
+title Layered Architecture — Auth Request Flow
+
+direction down
+colorMode bold
+styleMode plain
+
+Client [icon: user]
+
+"App Middleware" [color: lightblue] {
+  CookieParser [label: "cookie-parser"]
+  Helmet [label: "helmet"]
+  Cors [label: "cors (credentials: true)"]
+  BodyParsers [label: "express.json / urlencoded"]
+}
+
+Router [label: "authRouter"]
+
+"Route Middleware" [color: lightblue] {
+  RequestLogger [label: "requestLogger"]
+  Validate [label: "validate(schema)"]
+  Authenticate [label: "authenticate — verifies JWT cookie"]
+  Authorize [label: "authorize(roles) — role check"]
+}
+
+Controller [color: green, label: "AuthController — HTTP adapter only"]
+Service [color: green, label: "AuthService — business rules, no req/res"]
+Repository [color: green, label: "UserRepository — only file that queries the DB"]
+Model [icon: mongodb, label: "User model (Mongoose)"]
+
+Client > "App Middleware": "HTTP request"
+"App Middleware" > Router
+Router > "Route Middleware"
+"Route Middleware" > Controller: "req, res, next"
+Controller > Service: "one service method call"
+Service > Repository: "intent-named call (e.g. findByEmail)"
+Repository > Model: "Mongoose query"
+Model > Repository
+Repository > Service
+Service > Controller: "{ token, user }"
+Controller > Client: "cookie + JSON envelope"
+
+legend [position: bottom-right] {
+  [connection: >, label: "a layer calls down only — never up, never sideways"]
+  [color: green, label: "the four layers: Controller -> Service -> Repository -> Model"]
+}

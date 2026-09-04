@@ -11,6 +11,7 @@ one file, read for a few minutes, and have the full mental model back.
 | File | What it gives you |
 |---|---|
 | **[THE-MAP.md](THE-MAP.md)** | The whole app on one page: architecture diagram, every file annotated, the layer model, the build timeline, what runs vs what is dead. **Read this first, and whenever you come back after a break.** |
+| **[THE-WIRING.md](THE-WIRING.md)** | *How* every file actually connects: the full import graph, the moment-by-moment boot sequence (import → wire → connect → listen → handle), import vs dependency-injection explained side by side, and a worked "add the next feature" recipe. **Read this when the code makes sense file-by-file but the whole doesn't click yet.** |
 | **[GLOSSARY.md](GLOSSARY.md)** | Every term used in the logs, defined once. |
 | **[OPEN-ISSUES.md](OPEN-ISSUES.md)** | The live ledger of every known bug / shortcut / TODO across all phases, with status (open / fixed in phase N). |
 

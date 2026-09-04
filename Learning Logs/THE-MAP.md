@@ -1,7 +1,9 @@
 # THE MAP — how the whole app fits together
 
 Read this to rebuild the entire mental picture in five minutes. Everything else
-in `Learning Logs/` is depth on one slice of this page.
+in `Learning Logs/` is depth on one slice of this page. For *how the files
+actually connect* — the import graph, the boot sequence, import vs dependency
+injection — see [THE-WIRING.md](THE-WIRING.md).
 
 ---
 
