@@ -30,6 +30,16 @@ export class AuthService {
     delete userObj.password;
     return userObj;
   }
+
+  /**
+   * Compares the user-entered password with the hashed password.
+   * @param {string} userEnteredPassword - The password entered by the user.
+   * @param {string} hashedPassword - The hashed password stored in the database.
+   * @returns {Promise<boolean>} - Returns true if the passwords match, otherwise false.
+   */
+  async comparePassword(userEnteredPassword, hashedPassword) {
+    return await bcrypt.compare(userEnteredPassword, hashedPassword);
+  }
   async onboardSuperAdmin(superAdminData) {
     try {
       const superAdminCount = await this.userRepository.count({

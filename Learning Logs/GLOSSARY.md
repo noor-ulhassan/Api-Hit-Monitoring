@@ -90,6 +90,37 @@ it first mattered is in brackets.
   signature `(err, req, res, next)`, invoked only for errors, registered last.
 - **Middleware pipeline** *(P4)* — the ordered chain of `(req, res, next)`
   functions every request passes through; registration order is execution order.
+- **Middleware** *(P7)* — a function `(req, res, next)`. It can read/modify
+  `req`/`res`, then either call `next()` (pass to the next in line), send a
+  response and stop, or call `next(err)` (jump to the error handler).
+- **App-level vs route-level middleware** *(P7)* — `app.use(fn)` runs `fn` for
+  every request; `router.post(path, fn1, fn2, handler)` runs `fn1`/`fn2` only
+  for that route. `server.js` has the app-level chain; `authRouter.js` adds
+  per-route chains.
+- **Route / route handler** *(P7)* — a `VERB + path` bound to an ordered list of
+  middleware ending in a handler. The handler is the last function; it usually
+  hands off to a controller.
+- **Express `Router`** *(P7)* — a mini, mountable middleware stack.
+  `app.use("/api/auth", authRouter)` strips the prefix and lets the router match
+  the rest. Lets each feature own its routes in one file.
+- **Middleware factory** *(P6/P7)* — a function called with config that
+  *returns* a middleware: `authorize(roles)`, `validate(schema)`.
+- **`res.on("finish")`** *(P7)* — an event Node fires once the response is fully
+  written. The only place you can log the final status code and total duration —
+  which is why an access log registers a callback here rather than logging on
+  arrival.
+- **Request validation vs model validation** *(P7)* — the request gate
+  (`validate(schema)` middleware) checks the incoming body's shape cheaply,
+  before any DB work; model validation (Mongoose schema rules run on `save()`)
+  is the last-resort backstop deep in the repository. Ideally the gate is
+  stricter so `save()` never fails on user input.
+- **`cookie-parser`** *(P7)* — middleware that turns the raw `Cookie:` header
+  string into `req.cookies` (an object). Without it, `req.cookies` is
+  `undefined` and cookie-based auth cannot work.
+- **CORS credentials** *(P7)* — `cors({ credentials: true })` adds
+  `Access-Control-Allow-Credentials: true`, which is what lets a browser store
+  and send our auth cookie on cross-origin calls. Needs a specific `origin`
+  (not `*`) to actually take effect in the browser.
 
 ## Docker
 

@@ -29,6 +29,7 @@ file map, the gist, issues opened). Numbered files inside go deep on one piece.
 | 4 | [`phase-4-server-bootstrap/`](phase-4-server-bootstrap/) | `server.js` becomes a real bootstrap; the error middleware; the `endpoint_metrics` rollup table |
 | 5 | [`phase-5-running-and-docker/`](phase-5-running-and-docker/) | Fix the startup-blocking bugs; fill both Dockerfiles; add app + consumer services to compose |
 | 6 | [`phase-6-layered-architecture/`](phase-6-layered-architecture/) | The Repository → Service → Controller → DI pattern, on the `auth` feature; auth middleware |
+| 7 | [`phase-7-wiring-auth-end-to-end/`](phase-7-wiring-auth-end-to-end/) | The auth slice gets mounted: router + validation layer + request logger; `onboard-super-admin` works end to end; ~14 old bugs fixed. Includes a full request-lifecycle walkthrough |
 
 ---
 

@@ -70,10 +70,11 @@ after it arrives, which is fine for analytics.
 server/src/
 │
 ├─ server.js ─────────── the PRODUCER entry point. Builds the Express app, mounts
-│                        the middleware chain, serves GET / and GET /health, then
-│                        on boot connects Mongo+Postgres+Rabbit BEFORE listening,
-│                        and on SIGINT/SIGTERM shuts everything down cleanly.
-│                        Does NOT yet import anything under services/.
+│                        the app-level middleware (cookie-parser, helmet, cors,
+│                        body parsers, logger), serves GET / and GET /health,
+│                        MOUNTS the auth router at /api/auth, then on boot
+│                        connects Mongo+Postgres+Rabbit BEFORE listening, and on
+│                        SIGINT/SIGTERM shuts everything down cleanly.
 │
 ├─ shared/ ───────────── code both processes (producer + future consumer) share.
 │  │
@@ -116,69 +117,98 @@ server/src/
 │  │                     { success, errors[] }. Reusable outside the model.
 │  │
 │  └─ Middleware/ ────── Express middleware.
-│     ├─ errorHandler.js ─ the ONE (err,req,res,next). Maps Mongoose/JWT errors
-│     │                   to a ResponseFormatter.error envelope. Registered last.
+│     ├─ errorHandler.js ─ the ONE (err,req,res,next). Right status code, level-
+│     │                   aware logging, no message leak on 5xx. Registered last.
 │     ├─ authenticate.js ─ read the authToken cookie → verify JWT → req.user.
-│     │                   (has bugs; attached to no route yet)
-│     └─ authorize.js ─── authorize(roles) → (req,res,next) role gate.
-│                        (attached to no route yet)
+│     │                   (named export; used by /register and /profile)
+│     ├─ authorize.js ─── authorize(roles) → (req,res,next) role gate.
+│     │                   (used by /register)
+│     ├─ validate.js ──── validate(schema) → (req,res,next). Hand-rolled body
+│     │                   check; 400 + errors[] on failure. (P7)
+│     └─ requestLogger.js  res.on("finish") access log: method, url, ip,
+│                        status, duration. (P7)
 │
 └─ services/ ─────────── one folder per FEATURE, layers inside. Feature-first.
-   └─ auth/ ──────────── the only feature so far. Built, NOT wired to server.js.
-      ├─ repository/
-      │  ├─ BaseRepository.js ─ abstract contract: 5 methods that throw
-      │  │                      "not implemented". A stand-in for a JS interface.
-      │  └─ UserRepository.js ─ the MongoDB implementation. The ONLY file allowed
-      │                         to import the User model for writes.
-      ├─ service/
-      │  └─ authService.js ─── the business rules: "only one super admin ever",
-      │                        generateToken (JWT), formatUserForResponse (strip
-      │                        password). Knows nothing about req/res.
+   └─ auth/ ──────────── the only feature. MOUNTED at /api/auth as of P7.
+      ├─ routes/
+      │  └─ authRouter.js ── 5 routes, each a path + verb + middleware chain →
+      │                      a controller method. Only onboard-super-admin has a
+      │                      working controller method; the other 4 → 500.
       ├─ controller/
       │  └─ authController.js ─ the HTTP adapter: read req.body → ONE service call
       │                        → set cookie + ResponseFormatter envelope.
-      ├─ Dependencies/
-      │  └─ dependencies.js ── the composition root. News up repo → service →
-      │                        controller and wires them. The only place that
-      │                        decides "userRepository = the Mongo one".
-      └─ routes/
-         └─ authRouter.js ──── EMPTY. This missing file is why the whole auth
-                               slice is unreachable.
+      │                        ONLY has onboardSuperAdmin; register/login/
+      │                        getProfile/logout are missing (P7 issue).
+      ├─ service/
+      │  └─ authService.js ─── the business rules: onboardSuperAdmin ("one super
+      │                        admin ever"), register, login, getProfile,
+      │                        generateToken (JWT), formatUserForResponse (strip
+      │                        password). Knows nothing about req/res.
+      │                        (login calls a missing comparePassword — P7 issue)
+      ├─ repository/
+      │  ├─ BaseRepository.js ─ abstract contract: 6 methods that throw
+      │  │                      "not implemented". A stand-in for a JS interface.
+      │  └─ UserRepository.js ─ the MongoDB implementation. create/findById/
+      │                         findByUsername/findByEmail/findAll/count. The ONLY
+      │                         file allowed to import the User model for writes.
+      ├─ validation/
+      │  └─ authSchema.js ─── onboard / registration / login schemas for
+      │                       validate(). (P7)
+      └─ Dependencies/
+         └─ dependencies.js ── the composition root. News up repo → service →
+                               controller and wires them. Imported by authRouter.
 ```
 
 ---
 
-## 4. The layers (introduced Phase 6), and how a request will travel
+## 4. How a real request travels (as wired in Phase 7)
+
+For the full station-by-station walk, see
+[phase-7-wiring-auth-end-to-end/1-request-lifecycle.md](phase-7-wiring-auth-end-to-end/1-request-lifecycle.md).
+The shape:
 
 ```
-   HTTP request
-        │
-        ▼
-   Router        maps  VERB /path  →  a controller method, attaches middleware
-        │ calls
-        ▼
-   Controller    HTTP only: read req, call ONE service method, shape res
-        │ calls
-        ▼
-   Service       business rules & decisions; never sees req/res
-        │ calls
-        ▼
-   Repository    the ONLY layer that touches Mongoose / SQL
-        │ uses
-        ▼
-   Model  ──►  MongoDB
+  HTTP request
+      │
+  ── APP-LEVEL middleware (server.js, every request) ──────────────────
+  cookieParser → helmet → cors → express.json/urlencoded → inline logger
+      │
+  ── ROUTE MATCH ─────────────────────────────────────────────────────
+  app.use("/api/auth", authRouter)  →  authRouter matches VERB + path
+      │
+  ── ROUTE-LEVEL middleware (authRouter.js, this route only) ──────────
+  requestLogger → [authenticate → authorize(roles)]? → validate(schema)
+      │
+  ── THE LAYERS ──────────────────────────────────────────────────────
+  Controller   read req, call ONE service method, shape res
+      │ calls
+  Service      business rules & decisions; never sees req/res
+      │ calls
+  Repository   the ONLY layer that touches Mongoose / SQL
+      │ uses
+  Model  ──►  MongoDB
+      │
+  ── BACK OUT ────────────────────────────────────────────────────────
+  controller: res.cookie(...) + res.json(ResponseFormatter.success(...))
+      │
+  res emits "finish"  →  requestLogger logs status + duration
+      │
+  client
 ```
 
 **The one rule:** a layer calls **down**, never up, never sideways into a
 sibling. Controller must not run a query. Service must not read `req.body`.
 Repository must not know what a JWT is.
 
-Cross-cutting middleware sits *before* the controller:
-`authenticate` (who are you → `req.user`) then `authorize(roles)` (are you
-allowed) then the controller.
+**On an error:** a middleware either sends its own 4xx and stops, or the
+controller's `catch { next(error) }` jumps straight to `errorHandler` (the 4-arg
+middleware at the bottom of `server.js`), which sets the status from
+`err.statusCode`, logs at the right level, hides internal messages on unexpected
+5xx, and sends a `ResponseFormatter.error` envelope.
 
 `Dependencies/dependencies.js` is off to the side: it builds one of each class
-and wires them, so nothing else calls `new`.
+and wires them, so nothing else calls `new`. `authRouter` imports it to get the
+finished controller.
 
 ---
 
@@ -192,32 +222,38 @@ and wires them, so nothing else calls `new`.
 | **4 — Server bootstrap** | `server.js` rewritten (middleware, `/health`, connect-before-listen, graceful shutdown); `errorHandler`; `endpoint_metrics` SQL rollup table | Turn a pile of modules into a running process; give analytics a fast store |
 | **5 — Running + Docker** | Fixed the startup-blocking bugs; `Dockerfile` + `Dockerfile.consumer`; `api-app` + gated `consumer` compose services | Make it actually boot, then make it boot the same way anywhere |
 | **6 — Layered architecture** | `services/auth/` (repository → service → controller → DI container); `roles.js`; `cookie` config; `authenticate` / `authorize` | Set the architecture on the first real feature so every later feature copies it |
+| **7 — Wiring auth end to end** | `authRouter` filled + mounted; `validate` middleware + `authSchema`; `requestLogger`; `authService` register/login/getProfile; `cookie-parser`; ~14 Phase 1–6 bugs fixed | Connect the built-but-dead auth slice to real HTTP, and pay down the bug debt so it actually serves a request |
 
 ---
 
 ## 6. What actually runs today vs what is just sitting there
 
-**Runs** (as of `c01bff2`):
+**Runs** (as of `2fe568e`):
 
 - `docker compose up` → Postgres + Mongo + RabbitMQ + pgAdmin + `api-app`.
 - `server.js` boots, connects all three datastores, serves `GET /` and
-  `GET /health` with a `ResponseFormatter` envelope, 404s everything else.
-- Graceful shutdown on Ctrl-C / container stop.
+  `GET /health`, 404s unmatched routes, shuts down cleanly on Ctrl-C.
+- **`POST /api/auth/onboard-super-admin` works end to end** — creates the first
+  admin, hashes the password, mints a JWT, returns it as an `httpOnly` cookie +
+  a `ResponseFormatter` envelope. The `count({role})` guard blocks a second one.
+- The full request pipeline is live: cookie-parser, helmet, cors-with-credentials,
+  body parsing, per-route `requestLogger` / `authenticate` / `authorize` /
+  `validate`, and the `errorHandler` at the bottom.
 
-**Built but NOT reachable:**
+**Built but NOT reachable / half-wired:**
 
-- The entire `services/auth/` slice — `routes/authRouter.js` is empty and
-  `server.js` imports nothing under `services/`. No `/api/auth/*` route exists.
-- `authenticate` / `authorize` — attached to no route.
-- All four models — nothing imports them except the (unwired) `UserRepository`.
-- `endpoint_metrics` — the table exists, but nothing writes it (no consumer).
-- `errorHandler` — registered, but no route throws or calls `next(err)` yet.
+- `POST /api/auth/register`, `/login`, `/profile`, `/logout` — routes and
+  middleware chains exist, but `authController` has only `onboardSuperAdmin`, so
+  these throw `TypeError` → 500. `authService.register` / `login` / `getProfile`
+  *are* written; `login` also calls a missing `comparePassword`.
+- All four models — only `User` is reached (via `UserRepository`). `Client` /
+  `ApiKey` / `ApiHits` have no caller.
+- `endpoint_metrics` — the table exists, nothing writes it (no consumer).
 
 **Does not exist:**
 
 - The consumer process (`src/consumer.js`), so nothing drains `api_hits`.
-- Any feature beyond `auth`; login/logout/refresh even within `auth`.
-- `cookie-parser`, so even a wired router could not read the auth cookie.
+- Feature slices beyond `auth`.
 - Tests, linter config, CI.
 
 **The single biggest open bug list** lives in [OPEN-ISSUES.md](OPEN-ISSUES.md).
