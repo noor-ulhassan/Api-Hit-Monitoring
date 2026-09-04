@@ -1,5 +1,4 @@
 import express from "express";
-import dotenv from "dotenv";
 import errorHandler from "./shared/Middleware/errorHandler.js";
 import helmet from "helmet";
 import logger from "./shared/config/logger.js";
@@ -9,13 +8,22 @@ import rabbitmq from "./shared/config/rabbitmq.js";
 import ResponseFormatter from "./shared/utils/ResponseFormatter.js";
 import cors from "cors";
 import config from "./shared/config/index.js";
-dotenv.config();
+import cookieParser from "cookie-parser";
+
+// Routers
+import authRouter from "./services/auth/routes/authRouter.js";
 
 const app = express();
 
 // Middlewares
+app.use(cookieParser());
 app.use(helmet());
-app.use(cors());
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
@@ -60,6 +68,8 @@ app.get("/", (req, res) => {
   );
 });
 
+// /api/auth/onboard-super-admin
+app.use("/api/auth", authRouter);
 /**
  * 404 Handler
  */

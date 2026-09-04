@@ -2,17 +2,14 @@ import logger from "../config/logger.js";
 import ResponseFormatter from "../utils/ResponseFormatter.js";
 
 const errorHandler = (err, req, res, next) => {
-  let statusCode = req.statusCode || 500;
+  // A prior middleware already sent a response - let Express close it out.
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  let statusCode = err.statusCode || 500;
   let message = err.message || "Internal server error";
   let errors = err.errors || null;
-
-  logger.error("Error occurred:", {
-    message: err.message,
-    statusCode,
-    stack: err.stack,
-    path: req.path,
-    method: req.method,
-  });
 
   if (err.name === "ValidationError") {
     statusCode = 400;
@@ -27,6 +24,25 @@ const errorHandler = (err, req, res, next) => {
   } else if (err.name === "TokenExpiredError") {
     statusCode = 401;
     message = "Token expired";
+  }
+
+  const logMeta = {
+    message: err.message,
+    statusCode,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+  };
+  if (statusCode >= 500) {
+    logger.error("Error occurred:", logMeta);
+  } else {
+    logger.warn("Request error:", logMeta);
+  }
+
+  // Never leak internal failure details for non-operational (unexpected) errors.
+  if (statusCode >= 500 && err.isOperational !== true) {
+    message = "Internal server error";
+    errors = null;
   }
 
   res

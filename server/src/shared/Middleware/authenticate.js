@@ -1,8 +1,9 @@
-import ResponseFormatter from "../utils/ResponseFormatter";
+import ResponseFormatter from "../utils/ResponseFormatter.js";
 import jwt from "jsonwebtoken";
-import config from "../../shared/config/index.js";
+import config from "../config/index.js";
+import logger from "../config/logger.js";
 
-const authenticate = async (req, res, next) => {
+export const authenticate = async (req, res, next) => {
   try {
     let token = null;
     if (req.cookies && req.cookies.authToken) {
@@ -13,7 +14,7 @@ const authenticate = async (req, res, next) => {
         .status(401)
         .json(ResponseFormatter.error("Auth Token is Required"));
     }
-    const decoded = jwt.verify(token, config.jwt.sercet);
+    const decoded = jwt.verify(token, config.jwt.secret);
     const { userId, email, username, role, clientId } = decoded;
     req.user = {
       userId,

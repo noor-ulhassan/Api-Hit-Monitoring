@@ -20,4 +20,7 @@ export default class BaseRepository {
   async findAll() {
     throw new Error("Method not implemented");
   }
+  async count(filter = {}) {
+    throw new Error("Method not implemented");
+  }
 }

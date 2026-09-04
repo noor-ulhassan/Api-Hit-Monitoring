@@ -95,7 +95,21 @@ class MongoUserRepository extends BaseRepository {
         .select("-password");
       return user;
     } catch (error) {
-      logger.error("Error finding user by email", error);
+      logger.error("Error finding all users", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Counts users matching a filter (no isActive restriction).
+   * @param {Object} filter - Mongo filter, defaults to all users.
+   * @returns {Promise<number>}
+   */
+  async count(filter = {}) {
+    try {
+      return await this.model.countDocuments(filter);
+    } catch (error) {
+      logger.error("Error counting users", error);
       throw error;
     }
   }
