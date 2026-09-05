@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
-import SecurityUtils from "../utils/SecurityUtils.js";
+import SecurityUtils from "../utils/SecurityUtil.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -39,7 +39,7 @@ const userSchema = new mongoose.Schema(
           if (
             this.isModified("password") &&
             password &&
-            !password.startsWith("$2a$")
+            !/^\$2[aby]\$/.test(password)
           ) {
             const validation = SecurityUtils.validatePassword(password);
             return validation.success;
@@ -47,7 +47,7 @@ const userSchema = new mongoose.Schema(
           return true;
         },
         message: function (props) {
-          if (props.value && !props.value.startsWith("$2a$")) {
+          if (props.value && !/^\$2[aby]\$/.test(props.value)) {
             const validation = SecurityUtils.validatePassword(props.value);
             // ["Password is required", "Password must contain at least one uppercase letter"]
             // "Password is required. Password must contain at least one uppercase letter."
@@ -98,19 +98,15 @@ const userSchema = new mongoose.Schema(
   },
 );
 
-// Hash password before saving
-userSchema.pre("save", async function (next) {
+// Hash password before saving. Async pre-hooks propagate errors by throwing;
+// no `next` callback is used.
+userSchema.pre("save", async function () {
   if (!this.isModified("password")) {
-    return next();
+    return;
   }
 
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
 });
 
 // Indexes for efficient querying

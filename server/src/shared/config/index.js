@@ -5,7 +5,7 @@ dotenv.config();
 
 const config = {
   // server
-  node_env: process.env.NODE_ENV || "Development ",
+  node_env: process.env.NODE_ENV || "development",
   port: parseInt(process.env.PORT || 8080),
 
   // mongo
@@ -38,7 +38,7 @@ const config = {
   // jwt
 
   jwt: {
-    sercet: process.env.JWT_SECRET || "noorulhassan1",
+    secret: process.env.JWT_SECRET || "noorulhassan1",
     expiresIn: process.env.JWT_EXPIRES_IN || "24h",
   },
 

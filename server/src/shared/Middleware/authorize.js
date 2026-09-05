@@ -17,9 +17,9 @@ const authorize =
         return res.status(403).json(ResponseFormatter.error("Forbidden", 403));
       }
 
-      // skip
+      // No role restriction configured - allow any authenticated user.
       if (allowedRoles.length === 0) {
-        next();
+        return next();
       }
 
       if (!allowedRoles.includes(req.user.role)) {
